@@ -8,26 +8,16 @@
 # 9 PM IST = 15:30 UTC   -> 'dont'    reminder (MAN's evening DON'Ts)
 
 [build]
-  # Build the Next.js static export with Webpack (Turbopack has a bug with
-  # the current Next.js version that breaks static export).
-  command = "npx next build --webpack && python3 scripts/fix-static-paths.py"
+  command = "npx next build --webpack"
   publish = "out"
   functions = "netlify/functions"
 
 [functions]
-  # Use the modern v2 function format
   node_bundler = "esbuild"
 
-# Scheduled function: send reminders at 9 AM IST, 7 PM IST, and 9 PM IST
-# (= 03:30 UTC, 13:30 UTC, and 15:30 UTC respectively)
-# Cron: "30 3,13,15 * * *" = at minute 30 of hours 3, 13, and 15 UTC, every day
-[[functions.schedule]]
-  function = "send-reminders"
-  cron = "30 3,13,15 * * *"
+[functions."send-reminders"]
+  schedule = "30 3,13,15 * * *"
 
-# Redirect rule so the client can POST to /api/subscribe and /api/unsubscribe
-# without knowing the function path. Netlify auto-handles /api/* routing to
-# functions, but we make it explicit here for clarity.
 [[redirects]]
   from = "/api/subscribe"
   to = "/.netlify/functions/subscribe"
