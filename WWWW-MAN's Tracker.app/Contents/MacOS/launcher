@@ -1,0 +1,43 @@
+#!/bin/bash
+# ============================================================
+# WWWW x MAN's Habit Tracker - macOS .app bundle launcher
+# ============================================================
+# This .app is fully self-contained. The index.html and _next/
+# folder are bundled inside this .app's Resources folder.
+# You can drag this .app to your Applications folder, your Dock,
+# or anywhere you like - it works standalone.
+# ============================================================
+
+set -e
+
+# Resources folder is always at: <bundle>/Contents/Resources/
+APP_DIR="$(cd "$(dirname "$0")" && pwd)"           # .../Contents/MacOS
+CONTENTS_DIR="$(cd "$APP_DIR/.." && pwd)"          # .../Contents
+RESOURCES_DIR="$CONTENTS_DIR/Resources"            # .../Contents/Resources
+HTML_FILE="$RESOURCES_DIR/index.html"
+
+# Verify index.html exists
+if [ ! -f "$HTML_FILE" ]; then
+    echo "[ERROR] Cannot find index.html at: $HTML_FILE"
+    osascript -e 'display dialog "Cannot find index.html inside the app bundle. The .app may be corrupted." buttons {"OK"} default button 1 with title "WWWW x MAN'"'"'s Tracker" with icon stop'
+    exit 1
+fi
+
+FILE_URL="file://$HTML_FILE"
+
+# Find the best available Chromium browser (Chrome > Edge > Brave > Safari)
+BROWSER_PATH=""
+
+if [ -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ]; then
+    BROWSER_PATH="/Applications/Google Chrome.app"
+elif [ -x "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" ]; then
+    BROWSER_PATH="/Applications/Microsoft Edge.app"
+elif [ -x "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" ]; then
+    BROWSER_PATH="/Applications/Brave Browser.app"
+fi
+
+if [ -n "$BROWSER_PATH" ]; then
+    open -a "$BROWSER_PATH" --new --args --app="$FILE_URL" --app-id=wwww-mans-tracker
+else
+    open "$FILE_URL"
+fi

@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=WWWW x MAN's Tracker
+GenericName=Habit Tracker
+Comment=Daily DO's (WWW) and DON'Ts (MAN's) habit tracker with streaks
+# IMPORTANT: After copying this .desktop file, edit the three paths below
+# to point to where you extracted the habit-tracker folder.
+Exec=/path/to/habit-tracker/WWWW-MANs.sh
+Icon=/path/to/habit-tracker/icons/icon-256.png
+Path=/path/to/habit-tracker/
+Terminal=false
+Categories=Productivity;Office;Utility;
+Keywords=habit;tracker;discipline;routine;morning;5am;
+StartupNotify=true

@@ -1,0 +1,241 @@
+WWWW x MAN's - Web Push Setup Guide (REQUIRED for real push notifications)
+=======================================================================
+
+This guide shows you how to set up real push notifications on your Netlify
+site so that reminders fire at 9 AM IST, 7 PM IST, and 9 PM IST EVEN when
+the app is closed and your browser is not running.
+
+Without this setup, you only get in-page reminders (which fire only when
+the tracker tab is open). With this setup, you get real OS-level push
+notifications on your phone.
+
+Time required: ~15 minutes (one-time setup)
+Cost: FREE (Netlify free tier supports this)
+
+
+STEP 1: Get the latest habit-tracker folder
+-------------------------------------------
+Make sure you have the latest habit-tracker folder from habit-tracker.zip.
+Inside the folder you should see:
+  - index.html, _next/, favicon.svg, etc. (the static site)
+  - netlify/                      <-- the backend functions
+    - functions/
+      - subscribe.ts              <-- stores push subscriptions
+      - unsubscribe.ts            <-- removes push subscriptions
+      - send-reminders.ts         <-- scheduled cron that sends pushes
+  - netlify.toml                 <-- Netlify config (cron schedule)
+
+
+STEP 2: Re-deploy to Netlify (this time with the backend)
+----------------------------------------------------------
+Important: Netlify Drop (drag-and-drop) does NOT deploy Netlify Functions.
+You must connect your site to a GitHub repo to deploy the functions.
+
+  1. Sign in to GitHub (or create a free account at github.com)
+  2. Create a new public repository (e.g., "habit-tracker")
+  3. Upload ALL files from the habit-tracker folder to the repo:
+     - Either via the web upload (slow for many files), OR
+     - Use Git on your computer:
+         git init
+         git add .
+         git commit -m "habit tracker"
+         git branch -M main
+         git remote add origin https://github.com/YOURNAME/habit-tracker.git
+         git push -u origin main
+  4. Go to https://app.netlify.com
+  5. Click "Add new site" -> "Import an existing project"
+  6. Connect your GitHub account if you haven't already
+  7. Select your "habit-tracker" repo
+  8. Build settings (auto-filled from netlify.toml):
+     - Base directory: (leave blank)
+     - Build command: npx next build --webpack && python3 scripts/fix-static-paths.py
+     - Publish directory: out
+     - Functions directory: netlify/functions
+     (If "Build command" auto-detect fails, set it manually)
+  9. Click "Deploy site"
+  10. Wait 2-3 minutes for the first build to complete
+
+Note: If your build fails because Python is missing, change the Build
+command to just: npx next build --webpack
+(The fix-static-paths.py script is only needed for file:// - Netlify
+serves over HTTPS so absolute paths work fine.)
+
+
+STEP 3: Set the VAPID environment variables (CRITICAL)
+-------------------------------------------------------
+You need to set 3 environment variables in Netlify. These are the
+encryption keys used to authenticate Web Push messages.
+
+  1. Open your Netlify site dashboard
+  2. Click "Site configuration" in the left sidebar
+  3. Click "Environment variables"
+  4. Click "Add a variable" -> "Add a single variable"
+  5. Add these 3 variables:
+
+     Variable 1:
+       Key:   VAPID_PUBLIC_KEY
+       Value: BLKxv1vAANKoizGTe59RFjFcksWH_hDyoAeSq5q7glT7QCNrTQky59BaqnIe5fAzL9GCZNFTVX8HU7NJqkjUYCY
+
+     Variable 2:
+       Key:   VAPID_PRIVATE_KEY
+       Value: SQBYvvow1WhwO1nXHRdrqNtIegVm3ATp6LQT8qpFpcs
+       (KEEP THIS SECRET - do NOT commit to git)
+
+     Variable 3:
+       Key:   VAPID_SUBJECT
+       Value: mailto:youremail@example.com
+       (Replace with your real email - it's required by Web Push spec.
+        Just a contact identifier, no email is actually sent.)
+
+  6. After adding all 3, click "Deploy site" again to trigger a rebuild
+     with the new env vars.
+
+NOTE: If you want to generate your OWN VAPID keypair (instead of using
+the one I generated for you), run:
+   npx web-push generate-vapid-keys
+This gives you a new public and private key. Replace the public key in
+src/lib/notifications.ts (VAPID_PUBLIC_KEY constant) AND in the Netlify
+env vars. This is optional - the keys I generated work fine for personal
+use.
+
+
+STEP 4: Verify the cron schedule is registered
+-----------------------------------------------
+After the deploy completes:
+
+  1. In your Netlify dashboard, click "Functions" in the left sidebar
+  2. You should see 3 functions listed:
+     - subscribe
+     - unsubscribe
+     - send-reminders
+  3. Click on "send-reminders"
+  4. You should see a "Schedule" section showing:
+     "Runs at 03:30 UTC and 15:30 UTC every day"
+     (which equals 9:00 AM IST, 7:00 PM IST, and 9:00 PM IST)
+  5. If you don't see the schedule, your netlify.toml may not have been
+     uploaded. Make sure the netlify.toml file is in the root of your repo.
+
+
+STEP 5: Install on your iPhone 15 and subscribe
+-------------------------------------------------
+  1. Open Safari on your iPhone 15
+  2. Go to your Netlify URL (https://YOURNAME.netlify.app)
+  3. IMPORTANT: Add to Home Screen:
+       - Tap Share (bottom of Safari)
+       - Tap "Add to Home Screen"
+       - Tap Add
+  4. Open the tracker FROM THE HOME SCREEN ICON (not Safari)
+  5. Tap "Reminders" button (top-right)
+  6. Scroll down to the "Real push notifications" section
+  7. Tap "Enable push notifications"
+  8. iOS asks "Allow notifications?" -> tap "Allow"
+  9. You should see: "Subscribed - push notifications active on this device"
+  10. Tap "Test server push now" to verify immediately
+      (a real push should appear within ~10 seconds)
+
+
+STEP 6: Verify the cron fires correctly
+----------------------------------------
+To verify the scheduled push will fire at 9 AM IST, 7 PM IST, and 9 PM IST:
+
+  1. In Netlify dashboard, click "Functions" -> "send-reminders"
+  2. Click the "Logs" tab (or "Invocations")
+  3. At 9 AM IST, 7 PM IST, or 9 PM IST (your local time), refresh this page
+  4. You should see a new invocation log with output like:
+       [send-reminders] invoked at 2026-09-21T03:30:00.123Z
+       [send-reminders] found 1 subscriptions
+       [send-reminders] sent to <id> (https://fcm.googleapis.com/...)
+       [send-reminders] done. sent=1, failed=0
+
+  If sent > 0 but you didn't receive a push on your iPhone:
+    - Check iOS Settings -> Notifications -> Safari (or PWA name)
+    - Make sure "Allow Notifications" is ON
+    - Make sure you opened the tracker from the Home Screen icon
+      (not from Safari - iOS treats them differently)
+    - Make sure your iPhone is not in Low Power Mode
+    - Make sure no Focus mode is active (Do Not Disturb, etc.)
+    - Make sure the tracker has been opened in the last 7 days
+      (Apple pauses Web Push for unused PWAs)
+
+
+TROUBLESHOOTING
+---------------
+
+Q: I tapped "Enable push notifications" but got an error.
+
+A: Check the error message in the red banner. Common causes:
+   - "Push not supported in this browser": Use Safari on iOS 16.4+,
+     Chrome on Android/desktop, Edge on Windows. Firefox on desktop
+     works too.
+   - "Notifications are blocked": Open iOS Settings -> Safari ->
+     Notifications -> enable. OR re-add to Home Screen.
+   - "Server rejected subscription": Your Netlify deploy may not have
+     the subscribe function deployed. Verify Step 2 was done correctly
+     (you must connect a GitHub repo, NOT use Netlify Drop).
+
+Q: Cron fires but no push arrives on my iPhone.
+
+A: Most common iOS Web Push issues:
+   1. You opened the tracker from Safari, not from the Home Screen icon.
+      iOS only delivers Web Push to installed PWAs, not browser tabs.
+   2. You haven't opened the app in 7+ days. Apple pauses Web Push for
+      unused apps. Open it once a week to keep it active.
+   3. iPhone is in Low Power Mode or Focus mode. Disable both.
+   4. iOS Settings -> Notifications -> [your PWA name] is OFF. Enable it.
+   5. You cleared Safari data / website data. This uninstalled the PWA.
+      Re-install via Share -> Add to Home Screen.
+
+Q: Can I change the reminder times?
+
+A: Yes. Edit netlify.toml, change the cron line:
+     cron = "30 3,15 * * *"
+   Format is "minute hour day month dayofweek" in UTC.
+   To run at 7 PM IST (= 13:30 UTC) and 9 PM IST (= 15:30 UTC):
+     cron = "30 13,15 * * *"
+   Commit to git, push, Netlify auto-deploys.
+
+Q: How do I check the Netlify function logs?
+
+A: Netlify dashboard -> Functions -> send-reminders -> Logs tab.
+   You'll see every invocation, including which subscriptions received
+   the push and which failed.
+
+Q: I want to stop the cron entirely.
+
+A: In netlify.toml, comment out the schedule block:
+     # [[functions.schedule]]
+     #   function = "send-reminders"
+     #   cron = "30 3,15 * * *"
+   Commit and push. The function will still exist but won't run automatically.
+
+
+IMPORTANT NOTES
+---------------
+
+1. Web Push on iOS only works for installed PWAs (Home Screen apps),
+   not regular Safari tabs. Make sure Step 5 #3 is done.
+
+2. Apple pauses Web Push for apps not opened in 7+ days. Open your
+   tracker at least once a week to keep push delivery active.
+
+3. Web Push is a "banner notification" - it appears on your lock screen
+   and plays a sound. It is NOT a loud alarm. If you want a loud ring
+   that overrides silent mode, ALSO set up iPhone Clock app alarms.
+
+4. The VAPID_PRIVATE_KEY must be kept secret. I've included one for
+   your convenience, but for production use, generate your own with:
+       npx web-push generate-vapid-keys --json
+   Then set them in Netlify env vars AND update VAPID_PUBLIC_KEY in
+   src/lib/notifications.ts.
+
+5. The cron runs in UTC. IST is UTC+5:30. So 9 AM IST = 03:30 UTC,
+   7 PM IST = 13:30 UTC, 9 PM IST = 15:30 UTC. Adjust the cron expression
+   if you're in a different timezone.
+
+6. Netlify free tier supports 125,000 function invocations per month.
+   At 3 invocations per day (9 AM, 7 PM, 9 PM IST), that's ~90 per
+   month - well within free.
+
+7. Netlify Blobs (where we store subscriptions) free tier is 1 GB.
+   Each subscription is ~500 bytes, so you can store ~2 million
+   subscriptions before hitting the limit. Plenty for personal use.
