@@ -1,23 +1,22 @@
 # Netlify configuration for the WWWWW x MAN's Habit Tracker
-# This file tells Netlify how to build the site and schedule the
-# send-reminders function to run at 3 times daily in IST.
-#
-# Cron format: minute hour day month dayofweek (all in UTC)
-# 9 AM IST = 03:30 UTC   -> 'do'      reminder (WWWWW morning habits)
-# 7 PM IST = 13:30 UTC   -> 'weights' reminder (30-min weight workout)
-# 9 PM IST = 15:30 UTC   -> 'dont'    reminder (MAN's evening DON'Ts)
+# The site is ALREADY BUILT - the built files are in the repo root.
+# Netlify just needs to publish them directly, no build step needed.
 
 [build]
-  command = "npx next build --webpack"
-  publish = "out"
+  # No build command needed - the static files are already built
+  command = ""
+  # Publish the repo root directly (it contains index.html, _next/, etc.)
+  publish = "."
   functions = "netlify/functions"
 
 [functions]
   node_bundler = "esbuild"
 
+# Scheduled function: send reminders at 9 AM IST, 7 PM IST, and 9 PM IST
 [functions."send-reminders"]
   schedule = "30 3,13,15 * * *"
 
+# API routes redirect to Netlify Functions
 [[redirects]]
   from = "/api/subscribe"
   to = "/.netlify/functions/subscribe"
