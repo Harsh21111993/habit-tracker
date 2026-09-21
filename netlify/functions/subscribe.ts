@@ -1,15 +1,10 @@
-// Netlify Function v2: subscribe
-// Receives a Web Push subscription from the client and stores it in Netlify
-// Blobs. Used by send-reminders.ts to know which devices to push to.
-//
-// POST /api/subscribe
-// Body: { subscription: PushSubscriptionJSON }
-// Returns: { success: true } or { error: string }
+// Netlify Function: subscribe
+// Stores push subscription in Netlify Postgres database
 
 import type { Handler } from '@netlify/functions';
-import { getStore } from '@netlify/blobs';
+import pg from 'pg';
 
-const STORE_NAME = 'push-subscriptions';
+const { Client } = pg;
 
 interface SubscribeBody {
   subscription: {
@@ -20,7 +15,6 @@ interface SubscribeBody {
 }
 
 export const handler: Handler = async (event) => {
-  // CORS headers - allow the tracker (any origin) to call this endpoint
   const headers = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
@@ -28,7 +22,6 @@ export const handler: Handler = async (event) => {
     'Content-Type': 'application/json',
   };
 
-  // Handle preflight
   if (event.httpMethod === 'OPTIONS') {
     return { statusCode: 204, headers, body: '' };
   }
@@ -38,6 +31,15 @@ export const handler: Handler = async (event) => {
       statusCode: 405,
       headers,
       body: JSON.stringify({ error: 'Method not allowed. Use POST.' }),
+    };
+  }
+
+  const connectionString = process.env.NETLIFY_DATABASE_URL || process.env.DATABASE_URL;
+  if (!connectionString) {
+    return {
+      statusCode: 500,
+      headers,
+      body: JSON.stringify({ error: 'NETLIFY_DATABASE_URL env var not set' }),
     };
   }
 
@@ -51,17 +53,30 @@ export const handler: Handler = async (event) => {
       };
     }
 
-    // Use a hash of the endpoint as the blob key (so each device is stored
-    // separately, and re-subscription just overwrites the same key)
+    const client = new Client({ connectionString });
+    await client.connect();
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS push_subscriptions (
+        id TEXT PRIMARY KEY,
+        endpoint TEXT NOT NULL,
+        subscription JSONB NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
     const subId = Buffer.from(body.subscription.endpoint).toString('base64url').slice(0, 40);
 
-    const store = getStore(STORE_NAME);
-    await store.setJSON(subId, {
-      subscription: body.subscription,
-      createdAt: new Date().toISOString(),
-    });
+    await client.query(
+      `INSERT INTO push_subscriptions (id, endpoint, subscription)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (id) DO UPDATE SET subscription = $3, created_at = NOW()`,
+      [subId, body.subscription.endpoint, JSON.stringify(body.subscription)]
+    );
 
-    console.log(`[subscribe] stored subscription ${subId} for endpoint ${body.subscription.endpoint.substring(0, 60)}...`);
+    await client.end();
+
+    console.log(`[subscribe] stored subscription ${subId}`);
 
     return {
       statusCode: 200,
