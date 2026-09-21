@@ -4,8 +4,8 @@
   "private": true,
   "description": "WWWW x MAN's Habit Tracker - Netlify Functions backend",
   "dependencies": {
-    "@netlify/blobs": "^8.0.0",
     "@netlify/functions": "^2.0.0",
+    "pg": "^8.11.3",
     "web-push": "^3.6.7"
   }
 }
