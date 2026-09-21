@@ -1,38 +1,17 @@
-// Netlify Function v2: send-reminders (scheduled)
-// Runs on a cron schedule (defined in netlify.toml) at 9 AM and 9 PM IST
-// (= 03:30 UTC and 15:30 UTC). For each stored push subscription, sends a
-// Web Push notification telling the user to check their habit tracker.
-//
-// Required Netlify env vars:
-//   VAPID_PUBLIC_KEY  - the public key (also baked into the client)
-//   VAPID_PRIVATE_KEY - the private key (server only)
-//   VAPID_SUBJECT     - mailto: link for Web Push spec compliance
+// Netlify Function: send-reminders (scheduled)
+// Reads subscriptions from Postgres and sends Web Push at 9 AM, 7 PM, 9 PM IST
 
 import type { Handler } from '@netlify/functions';
-import { getStore } from '@netlify/blobs';
+import pg from 'pg';
 import webpush from 'web-push';
 
-const STORE_NAME = 'push-subscriptions';
+const { Client } = pg;
 
-interface StoredEntry {
-  subscription: {
-    endpoint: string;
-    keys: { p256dh: string; auth: string };
-    expirationTime?: number | null;
-  };
-  createdAt: string;
-}
-
-// Determine which reminder kind to send based on the current UTC hour.
-// Cron runs at 3 times daily (in IST):
-//   - 03:30 UTC  =  09:00 IST  -> 'do'      (WWWWW morning habits)
-//   - 13:30 UTC  =  19:00 IST  -> 'weights' (7 PM weight workout)
-//   - 15:30 UTC  =  21:00 IST  -> 'dont'    (MAN's evening DON'Ts)
 function getReminderKind(): 'do' | 'weights' | 'dont' | null {
   const hourUtc = new Date().getUTCHours();
-  if (hourUtc === 3 || hourUtc === 4) return 'do';        // 09:00 IST
-  if (hourUtc === 13 || hourUtc === 14) return 'weights'; // 19:00 IST
-  if (hourUtc === 15 || hourUtc === 16) return 'dont';     // 21:00 IST
+  if (hourUtc === 3 || hourUtc === 4) return 'do';
+  if (hourUtc === 13 || hourUtc === 14) return 'weights';
+  if (hourUtc === 15 || hourUtc === 16) return 'dont';
   return null;
 }
 
@@ -40,28 +19,27 @@ function getPayload(kind: 'do' | 'weights' | 'dont'): { title: string; body: str
   if (kind === 'do') {
     return {
       title: '🌅 Time to check your WWWWW tracker',
-      body: '5 DO\'s not yet marked: Wakeup • Workout • Worship • Wisdom • Weights. Tap to check in.',
+      body: "5 DO's not yet marked: Wakeup • Workout • Worship • Wisdom • Weights. Tap to check in.",
       tag: 'wwww-reminder',
     };
   }
   if (kind === 'weights') {
     return {
       title: '🏋️ Time for your Weights workout',
-      body: '30-min weight training starts now. Build strength, build discipline. Tap to mark it done after.',
+      body: '30-min weight training starts now. Tap to mark it done after.',
       tag: 'weights-reminder',
     };
   }
   return {
-    title: '🌙 Time to check your MAN\'s tracker',
-    body: '5 DON\'s not yet marked as avoided: Mast • Alcohol • Non-veg • Sugar • Snacking. Tap to check in.',
+    title: "🌙 Time to check your MAN's tracker",
+    body: "5 DON'Ts not yet marked: Mast • Alcohol • Non-veg • Sugar • Snacking. Tap to check in.",
     tag: 'mans-reminder',
   };
 }
 
 export const handler: Handler = async (event) => {
-  console.log('[send-reminders] invoked at', new Date().toISOString(), 'with event:', event.body?.substring(0, 200));
+  console.log('[send-reminders] invoked at', new Date().toISOString());
 
-  // Read VAPID keys from env
   const publicKey = process.env.VAPID_PUBLIC_KEY;
   const privateKey = process.env.VAPID_PRIVATE_KEY;
   const subject = process.env.VAPID_SUBJECT || 'mailto:tracker@example.com';
@@ -70,7 +48,7 @@ export const handler: Handler = async (event) => {
     console.error('[send-reminders] missing VAPID env vars');
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: 'Missing VAPID env vars. Set VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT in Netlify site settings.' }),
+      body: JSON.stringify({ error: 'Missing VAPID env vars' }),
     };
   }
 
@@ -78,17 +56,28 @@ export const handler: Handler = async (event) => {
 
   const kind = getReminderKind();
   if (!kind) {
-    console.log('[send-reminders] no reminder scheduled for this hour, exiting');
+    console.log('[send-reminders] no reminder scheduled for this hour');
     return {
       statusCode: 200,
-      body: JSON.stringify({ skipped: true, reason: 'not a reminder hour' }),
+      body: JSON.stringify({ skipped: true }),
     };
   }
 
-  // Read all stored subscriptions
-  const store = getStore(STORE_NAME);
-  const list = await store.list();
-  console.log(`[send-reminders] found ${list.blobs.length} subscriptions`);
+  const connectionString = process.env.NETLIFY_DATABASE_URL || process.env.DATABASE_URL;
+  if (!connectionString) {
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ error: 'NETLIFY_DATABASE_URL env var not set' }),
+    };
+  }
+
+  const client = new Client({ connectionString });
+  await client.connect();
+
+  const result = await client.query('SELECT subscription FROM push_subscriptions');
+  await client.end();
+
+  console.log(`[send-reminders] found ${result.rows.length} subscriptions`);
 
   const payload = getPayload(kind);
   const pushPayload = JSON.stringify({
@@ -97,7 +86,6 @@ export const handler: Handler = async (event) => {
     tag: payload.tag,
     icon: '/favicon.svg',
     badge: '/favicon.svg',
-    requireInteraction: false,
     data: { url: '/' },
   });
 
@@ -105,48 +93,31 @@ export const handler: Handler = async (event) => {
   let failed = 0;
   const errors: string[] = [];
 
-  for (const blob of list.blobs) {
+  for (const row of result.rows) {
     try {
-      const entry = (await store.get(blob.key, { type: 'json' })) as StoredEntry | null;
-      if (!entry || !entry.subscription) {
-        console.warn(`[send-reminders] no entry for key ${blob.key}, skipping`);
-        continue;
-      }
-
-      const result = await webpush.sendNotification(entry.subscription, pushPayload, {
-        TTL: 60 * 60, // 1 hour max lifetime if device is offline
+      const subscription = row.subscription;
+      const result = await webpush.sendNotification(subscription, pushPayload, {
+        TTL: 60 * 60,
         urgency: 'normal',
       });
 
       if (result.statusCode === 200 || result.statusCode === 201) {
         sent++;
-        console.log(`[send-reminders] sent to ${blob.key} (${entry.subscription.endpoint.substring(0, 50)}...)`);
+        console.log(`[send-reminders] sent to ${subscription.endpoint?.substring(0, 50)}...`);
       } else {
         failed++;
-        errors.push(`${blob.key}: ${result.statusCode} ${result.body?.substring(0, 100)}`);
-        // If the endpoint is gone (410 Gone) or invalid (404), remove the subscription
-        if (result.statusCode === 404 || result.statusCode === 410) {
-          await store.delete(blob.key);
-          console.log(`[send-reminders] removed stale subscription ${blob.key} (${result.statusCode})`);
-        }
+        errors.push(`${result.statusCode} ${result.body?.substring(0, 100)}`);
       }
     } catch (err) {
       failed++;
-      const errMsg = String(err).substring(0, 100);
-      errors.push(`${blob.key}: ${errMsg}`);
-      console.error(`[send-reminders] error for ${blob.key}:`, errMsg);
+      errors.push(String(err).substring(0, 100));
+      console.error('[send-reminders] error:', String(err).substring(0, 200));
     }
   }
 
   console.log(`[send-reminders] done. sent=${sent}, failed=${failed}`);
   return {
     statusCode: 200,
-    body: JSON.stringify({
-      success: true,
-      kind,
-      sent,
-      failed,
-      errors: errors.slice(0, 5),
-    }),
+    body: JSON.stringify({ success: true, kind, sent, failed, errors: errors.slice(0, 5) }),
   };
 };
