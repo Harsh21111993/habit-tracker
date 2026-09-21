@@ -1,13 +1,10 @@
-// Netlify Function v2: unsubscribe
-// Removes a push subscription when the user disables notifications.
-//
-// POST /api/unsubscribe
-// Body: { endpoint: string }
+// Netlify Function: unsubscribe
+// Removes push subscription from Netlify Postgres database
 
 import type { Handler } from '@netlify/functions';
-import { getStore } from '@netlify/blobs';
+import pg from 'pg';
 
-const STORE_NAME = 'push-subscriptions';
+const { Client } = pg;
 
 interface UnsubscribeBody {
   endpoint: string;
@@ -33,6 +30,15 @@ export const handler: Handler = async (event) => {
     };
   }
 
+  const connectionString = process.env.NETLIFY_DATABASE_URL || process.env.DATABASE_URL;
+  if (!connectionString) {
+    return {
+      statusCode: 500,
+      headers,
+      body: JSON.stringify({ error: 'NETLIFY_DATABASE_URL env var not set' }),
+    };
+  }
+
   try {
     const body = JSON.parse(event.body || '{}') as UnsubscribeBody;
     if (!body.endpoint) {
@@ -44,8 +50,11 @@ export const handler: Handler = async (event) => {
     }
 
     const subId = Buffer.from(body.endpoint).toString('base64url').slice(0, 40);
-    const store = getStore(STORE_NAME);
-    await store.delete(subId);
+
+    const client = new Client({ connectionString });
+    await client.connect();
+    await client.query('DELETE FROM push_subscriptions WHERE id = $1', [subId]);
+    await client.end();
 
     console.log(`[unsubscribe] removed subscription ${subId}`);
     return {
